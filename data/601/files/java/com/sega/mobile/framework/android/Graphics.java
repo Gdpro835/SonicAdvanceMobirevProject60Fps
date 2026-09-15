@@ -8,6 +8,7 @@ import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Region;
+import android.os.Build;
 import com.sega.MFLib.Main;
 import SonicGBA.GlobalResource;
 
@@ -31,11 +32,24 @@ public class Graphics {
     private Matrix mMatrix = new Matrix();
     private Paint mPaint = new Paint();
     private Path mPath = new Path();
+    private int mFrameSaveCount = -1;
 
     public Graphics() {
         this.mPaint.setAntiAlias(true);
         this.mPaint.setFilterBitmap(true);
+        this.mPaint.setDither(false);
         this.mPaint.setTextSize((float) this.mFont.getHeight());
+    }
+
+    public boolean isHardwareAccelerated() {
+        return this.mCanvas != null && Build.VERSION.SDK_INT >= 11 && this.mCanvas.isHardwareAccelerated();
+    }
+
+    public void beginFrame() {
+        this.mFrameSaveCount = -1;
+        if (this.mCanvas != null) {
+            this.mFrameSaveCount = this.mCanvas.save();
+        }
     }
 
     public void setFilterBitmap(boolean b) {
@@ -66,6 +80,7 @@ public class Graphics {
 
     public void setCanvas(Canvas canvas) {
         this.mCanvas = canvas;
+        this.mFrameSaveCount = -1;
     }
 
     public Canvas getCanvas() {
@@ -182,8 +197,25 @@ public class Graphics {
     }
 
     public void setClip(int x, int y, int w, int h) {
-        if (this.mCanvas != null) {
+        if (this.mCanvas == null) {
+            return;
+        }
+        // Hardware canvases (and software canvases on API 28+) reject Region.Op.REPLACE.
+        // Restore to the frame checkpoint, then apply a fresh intersect clip.
+        if (this.mFrameSaveCount >= 0) {
+            try {
+                this.mCanvas.restoreToCount(this.mFrameSaveCount);
+            } catch (Exception e) {
+            }
+            this.mFrameSaveCount = this.mCanvas.save();
+            this.mCanvas.clipRect((float) x, (float) y, (float) (x + w), (float) (y + h));
+            return;
+        }
+        try {
             this.mCanvas.clipRect((float) x, (float) y, (float) (x + w), (float) (y + h), Region.Op.REPLACE);
+        } catch (Exception e) {
+            this.mCanvas.save();
+            this.mCanvas.clipRect((float) x, (float) y, (float) (x + w), (float) (y + h));
         }
     }
 

@@ -459,6 +459,7 @@ private void showNotification(String title, String text, int notificationId) {
     public void onCreate(Bundle savedInstanceState) {
         requestWindowFeature(1);      
         super.onCreate(savedInstanceState);
+        getWindow().setFlags(16777216, 16777216);
         if (Build.VERSION.SDK_INT >= 28) {
             getWindow().setFlags(512, 512);
             getWindow().getAttributes().layoutInDisplayCutoutMode = 1;

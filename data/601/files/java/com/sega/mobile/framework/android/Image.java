@@ -24,6 +24,7 @@ public class Image {
         }
         Image img = new Image();
         img.mBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        prepareForGpu(img.mBitmap);
         return img;
     }
 
@@ -42,6 +43,7 @@ public class Image {
         } else if (MFDevice.preScaleZoomInFlag) {
             img.mBitmap = Bitmap.createScaledBitmap(img.mBitmap, (width << MFDevice.preScaleShift) * Main.scale, (height << MFDevice.preScaleShift) * Main.scale, true);
         }
+        prepareForGpu(img.mBitmap);
         return img;
     }
 
@@ -89,6 +91,7 @@ public class Image {
         }
         Image img = new Image();
         img.mBitmap = Bitmap.createBitmap(image.getBitmap(), x, y, width, height, matrix, false);
+        prepareForGpu(img.mBitmap);
         return img;
     }
 
@@ -179,6 +182,7 @@ public class Image {
             img.mBitmap = Bitmap.createScaledBitmap(old2, (old2.getWidth() << MFDevice.preScaleShift) * Main.scale, (old2.getHeight() << MFDevice.preScaleShift) * Main.scale, false);
             old2.recycle();
         }
+        prepareForGpu(img.mBitmap);
         return img;
     }
 

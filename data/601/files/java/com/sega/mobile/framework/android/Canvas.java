@@ -1,6 +1,8 @@
 package com.sega.mobile.framework.android;
 
 import android.content.Context;
+import android.graphics.PixelFormat;
+import android.os.Build;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
@@ -33,8 +35,10 @@ public class Canvas extends SurfaceView implements SurfaceHolder.Callback {
         }
         this.mHolder = getHolder();
         this.mHolder.addCallback(this);
+        this.mHolder.setFormat(PixelFormat.RGBX_8888);
         setFocusable(true);
         setZOrderOnTop(false);
+        setKeepScreenOn(true);
         screenWidth = context.getResources().getDisplayMetrics().widthPixels;
         screenHeight = context.getResources().getDisplayMetrics().heightPixels;
     }
@@ -282,24 +286,51 @@ public class Canvas extends SurfaceView implements SurfaceHolder.Callback {
     public void paint(Graphics g) {
     }
 
+    private android.graphics.Canvas lockRenderCanvas() {
+        if (this.mHolder == null || this.mHolder.getSurface() == null || !this.mHolder.getSurface().isValid()) {
+            return null;
+        }
+        android.graphics.Canvas canvas = null;
+        if (Build.VERSION.SDK_INT >= 23) {
+            try {
+                canvas = this.mHolder.lockHardwareCanvas();
+            } catch (Throwable t) {
+                canvas = null;
+            }
+        }
+        if (canvas == null) {
+            try {
+                canvas = this.mHolder.lockCanvas();
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+        return canvas;
+    }
+
     public void repaint() {
+        android.graphics.Canvas nativeCanvas = null;
         try {
-            this.mGraphics.setCanvas(this.mHolder.lockCanvas());
+            nativeCanvas = lockRenderCanvas();
+            this.mGraphics.setCanvas(nativeCanvas);
             synchronized (this.mHolder) {
                 if (this.mGraphics.getCanvas() != null) {
                     paint(this.mGraphics);
                 }
             }
-            if (this.mGraphics.getCanvas() != null) {
-                this.mHolder.unlockCanvasAndPost(this.mGraphics.getCanvas());
+            if (nativeCanvas != null) {
+                this.mHolder.unlockCanvasAndPost(nativeCanvas);
+                nativeCanvas = null;
             }
         } catch (Throwable th) {
             try {
-            if (this.mGraphics.getCanvas() != null) {
-                this.mHolder.unlockCanvasAndPost(this.mGraphics.getCanvas());
-            }
+                if (nativeCanvas != null) {
+                    this.mHolder.unlockCanvasAndPost(nativeCanvas);
+                } else if (this.mGraphics.getCanvas() != null) {
+                    this.mHolder.unlockCanvasAndPost(this.mGraphics.getCanvas());
+                }
             } catch (Exception e) {
-            e.printStackTrace();
+                e.printStackTrace();
             }
         }
     }

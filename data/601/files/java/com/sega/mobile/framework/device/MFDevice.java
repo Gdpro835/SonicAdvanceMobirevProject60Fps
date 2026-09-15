@@ -7,6 +7,7 @@ import android.content.res.AssetManager;
 import android.database.Cursor;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Vibrator;
 import android.telephony.TelephonyManager;
 import com.sega.mobile.define.MDPhone;
@@ -54,6 +55,7 @@ public final class MFDevice {
     static int bufferHeight;
     /* access modifiers changed from: private */
     public static Image bufferImage;
+    private static Graphics softwareGraphics;
     static int bufferWidth;
     static boolean clearBuffer = true;
     /* access modifiers changed from: private */
@@ -98,6 +100,8 @@ public final class MFDevice {
     public static double delta2 = 0;
     public static ScheduledExecutorService executor;
     public static volatile boolean isPaused = false;
+    /** Draw sprites/tiles via GPU (lockHardwareCanvas) instead of a software framebuffer. */
+    public static boolean useGpu = true;
     //public static final Object inputLock = new Object();
     /*public static boolean showFPS = false;
     public static int lastFPS = 0;
@@ -396,30 +400,19 @@ started = true;
                     MFDevice.currentState.onEnter();
                     MFDevice.nextState = null;
                 }
-                MFDevice.graphics.reset();
-                if (MFDevice.clearBuffer) {
-                    MFDevice.clearScreen();
-                }
                 if (MFDevice.interruptPauseFlag) {
                     if (!MFDevice.inSuspendFlag && MFMain.getInstance().logicDeviceSuspend()) {
                         MFDevice.notifyResume();
                     }
-                    MFMain.getInstance().drawDeviceSuspend(MFDevice.graphics);
-                } else {
+                } else if (MFDevice.currentState != null) {
                     MFDevice.currentState.onTick();
-                    if (!MFDevice.exitFlag) {
-                        for (int i2 = 1; i2 > 0; i2--) {
-                            if (MFDevice.preLayerGraphics[i2 - 1] != null) {
-                                MFDevice.currentState.onRender(MFDevice.preLayerGraphics[i2 - 1], -i2);
-                            }
-                        }
-                        MFDevice.currentState.onRender(MFDevice.graphics);
-                        for (int i3 = 1; i3 <= 1; i3++) {
-                            if (MFDevice.postLayerGraphics[i3 - 1] != null) {
-                                MFDevice.currentState.onRender(MFDevice.postLayerGraphics[i3 - 1], i3);
-                            }
-                        }
+                }
+                if (!MFDevice.shouldRenderDirectToGpu()) {
+                    MFDevice.graphics.reset();
+                    if (MFDevice.clearBuffer) {
+                        MFDevice.clearScreen();
                     }
+                    MFDevice.renderGameTo(MFDevice.graphics);
                 }
                 MFDevice.mainCanvas.repaint();
             }
@@ -484,22 +477,7 @@ started = true;
 
         public final void paint(Graphics g) {
             synchronized (MFDevice.mainRunnable) {
-                for (int i = 1; i > 0; i--) {
-                    if (MFDevice.preLayerImage[i - 1] != null) {
-                        g.drawImage(MFDevice.preLayerImage[i - 1], 0, 0, 0);
-                    }
-                }
-                if (MFDevice.bufferImage != null) {
-                    g.drawScreen(MFDevice.bufferImage, (Rect) null, new Rect(0, 0, MFDevice.deviceWidth, MFDevice.deviceHeight));
-                }
-                for (int i2 = 1; i2 <= 1; i2++) {
-                    if (MFDevice.postLayerImage[i2 - 1] != null) {
-                        g.drawImage(MFDevice.postLayerImage[i2 - 1], 0, 0, 0);
-                    }
-                }
-                if (MFDevice.fontImage != null) {
-                    g.drawImage(MFDevice.fontImage, 0, 0, 0);
-                }
+                MFDevice.presentFrame(g);
                 /*if (MFDevice.showFPS && MFDevice.render) {
                    g.setColor(255, 255, 255);
                    MFDevice.FPSString = "FPS: " + lastFPS;
@@ -589,6 +567,116 @@ started = true;
             }
         }
 
+    }
+
+    public static boolean shouldRenderDirectToGpu() {
+        return useGpu && Build.VERSION.SDK_INT >= 23;
+    }
+
+    private static void renderPreLayers() {
+        if (interruptPauseFlag || currentState == null || exitFlag) {
+            return;
+        }
+        for (int i2 = 1; i2 > 0; i2--) {
+            if (preLayerGraphics[i2 - 1] != null) {
+                currentState.onRender(preLayerGraphics[i2 - 1], -i2);
+            }
+        }
+    }
+
+    private static void renderPostLayers() {
+        if (interruptPauseFlag || currentState == null || exitFlag) {
+            return;
+        }
+        for (int i3 = 1; i3 <= 1; i3++) {
+            if (postLayerGraphics[i3 - 1] != null) {
+                currentState.onRender(postLayerGraphics[i3 - 1], i3);
+            }
+        }
+    }
+
+    private static void renderGameTo(MFGraphics target) {
+        if (target == null) {
+            return;
+        }
+        if (interruptPauseFlag) {
+            MFMain.getInstance().drawDeviceSuspend(target);
+            return;
+        }
+        if (currentState == null || exitFlag) {
+            return;
+        }
+        renderPreLayers();
+        currentState.onRender(target);
+        renderPostLayers();
+    }
+
+    private static void applyGpuViewTransform(android.graphics.Canvas canvas) {
+        if (canvas == null || bufferWidth <= 0 || bufferHeight <= 0) {
+            return;
+        }
+        canvas.scale(((float) deviceWidth) / ((float) bufferWidth), ((float) deviceHeight) / ((float) bufferHeight));
+        canvas.translate((float) horizontalOffset, (float) verticvalOffset);
+    }
+
+    private static void blitLayerImage(Graphics g, Image image) {
+        if (image != null) {
+            g.drawImage(image, 0, 0, 0);
+        }
+    }
+
+    private static void presentFrame(Graphics g) {
+        android.graphics.Canvas nativeCanvas = g.getCanvas();
+        boolean gpu = shouldRenderDirectToGpu() && g.isHardwareAccelerated() && nativeCanvas != null;
+        if (gpu) {
+            nativeCanvas.drawColor(-16777216);
+            renderPreLayers();
+            for (int i = 1; i > 0; i--) {
+                blitLayerImage(g, preLayerImage[i - 1]);
+            }
+            int deviceSpaceSave = nativeCanvas.save();
+            applyGpuViewTransform(nativeCanvas);
+            g.beginFrame();
+            if (graphics != null) {
+                graphics.setGraphics(g);
+                graphics.reset();
+                if (interruptPauseFlag) {
+                    MFMain.getInstance().drawDeviceSuspend(graphics);
+                } else if (currentState != null && !exitFlag) {
+                    currentState.onRender(graphics);
+                }
+            }
+            try {
+                nativeCanvas.restoreToCount(deviceSpaceSave);
+            } catch (Exception e) {
+            }
+            renderPostLayers();
+            for (int i2 = 1; i2 <= 1; i2++) {
+                blitLayerImage(g, postLayerImage[i2 - 1]);
+            }
+            blitLayerImage(g, fontImage);
+            if (graphics != null && softwareGraphics != null) {
+                graphics.setGraphics(softwareGraphics);
+            }
+            return;
+        }
+        if (shouldRenderDirectToGpu() && graphics != null) {
+            graphics.reset();
+            if (clearBuffer) {
+                clearScreen();
+            }
+            renderGameTo(graphics);
+        }
+        for (int i = 1; i > 0; i--) {
+            blitLayerImage(g, preLayerImage[i - 1]);
+        }
+        if (bufferImage != null) {
+            g.drawScreen(bufferImage, (Rect) null, new Rect(0, 0, deviceWidth, deviceHeight));
+        }
+        for (int i2 = 1; i2 <= 1; i2++) {
+            blitLayerImage(g, postLayerImage[i2 - 1]);
+        }
+        blitLayerImage(g, fontImage);
     }
 
     public static final void addComponent(MFComponent component) {
@@ -1168,7 +1256,8 @@ started = true;
             screenWidth = MFScreen.getScreenWidth(MFMain.getInstance());
             drawRect = new Rect(0, 0, deviceWidth, deviceHeight);
             bufferImage = Image.createImage(deviceWidth, deviceHeight);
-            graphics = MFGraphics.createMFGraphics(bufferImage.getGraphics(), deviceWidth, deviceHeight);
+            softwareGraphics = bufferImage.getGraphics();
+            graphics = MFGraphics.createMFGraphics(softwareGraphics, deviceWidth, deviceHeight);
             bufferWidth = bufferImage.getWidth();
             bufferHeight = bufferImage.getHeight();
             horizontalOffset = (drawRect.left * bufferWidth) / deviceWidth;
@@ -1219,7 +1308,8 @@ started = true;
                 bufferImage = Image.createImage((screenHeight * deviceWidth) / deviceHeight, screenHeight);
             }
             scaleFactor = ((float) deviceHeight) / ((float) screenHeight);
-            graphics = MFGraphics.createMFGraphics(bufferImage.getGraphics(), (screenHeight * deviceWidth) / deviceHeight, screenHeight);
+            softwareGraphics = bufferImage.getGraphics();
+            graphics = MFGraphics.createMFGraphics(softwareGraphics, (screenHeight * deviceWidth) / deviceHeight, screenHeight);
         } else {
             if (preScaleZoomOutFlag && screenWidth > deviceWidth) {
                 preScaleShift = 0;
@@ -1261,7 +1351,8 @@ started = true;
             } else {
                 bufferImage = Image.createImage(screenWidth, (screenWidth * deviceHeight) / deviceWidth);
             }
-            graphics = MFGraphics.createMFGraphics(bufferImage.getGraphics(), screenWidth, (screenWidth * deviceHeight) / deviceWidth);
+            softwareGraphics = bufferImage.getGraphics();
+            graphics = MFGraphics.createMFGraphics(softwareGraphics, screenWidth, (screenWidth * deviceHeight) / deviceWidth);
         }
         bufferWidth = bufferImage.getWidth() >> preScaleShift;
         bufferHeight = bufferImage.getHeight() >> preScaleShift;
