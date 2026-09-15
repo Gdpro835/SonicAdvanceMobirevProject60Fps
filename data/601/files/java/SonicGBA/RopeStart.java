@@ -148,7 +148,10 @@ class RopeStart extends GimmickObject {
             int var1 = player.getFootPositionY();
             var5.checkWithObject(var3, var4, var2, var1);
             if (!isGotRings) {
-               SoundSystem.getInstance().playSequenceSe(50);
+               SoundSystem sound = SoundSystem.getInstance();
+               if (!sound.isLoopSePlaying() || sound.getPlayingLoopSeIndex() != 50) {
+                  sound.playSequenceSe(50);
+               }
             }
          }
       }

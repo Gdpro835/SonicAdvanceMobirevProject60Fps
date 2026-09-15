@@ -165,6 +165,8 @@ public class SoundSystem {
     private float preSpeed;
     private int seIndex;
     private MFPlayer seplayer;
+    private final Object sePlayerLock = new Object();
+    private volatile boolean seBusy;
     private float speed;
 
     public SoundSystem() {
@@ -360,192 +362,264 @@ public class SoundSystem {
         MFSound.resumeBgm();
     }
 
+    private boolean seIndexValid(int index) {
+        return index >= 0 && index < this.SE_NAME.length;
+    }
+
+    private void closePlayerQuietly(MFPlayer player) {
+        if (player == null) {
+            return;
+        }
+        try {
+            player.stop();
+        } catch (Exception e) {
+        }
+        try {
+            player.close();
+        } catch (Exception e) {
+        }
+    }
+
+    private boolean seAlreadyActive(int index, boolean loop) {
+        if (this.seBusy) {
+            return true;
+        }
+        if (this.seplayer == null || this.seIndex != index) {
+            return false;
+        }
+        int state = this.seplayer.getState();
+        if (state == 3) {
+            return true;
+        }
+        if (loop && (state == 1 || state == 2)) {
+            return true;
+        }
+        return false;
+    }
+
     public void playSe(int index, boolean loop) {
         stopLoopSe();
         final int ind = index;
-    Thread thread = new Thread(new Runnable() {
-    @Override
-    public void run() {
-        MFSound.playSe(SE_PATH + SE_NAME[ind], 1);
+        if (!seIndexValid(ind)) {
+            return;
         }
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                try {
+                    MFSound.playSe(SE_PATH + SE_NAME[ind], 1);
+                } catch (Exception e) {
+                }
+            }
         });
         thread.start();
     }
 
     public void playSe(int index) {
-    playSe(index, false);
+        playSe(index, false);
     }
 
     public void playLongSe(int index) {
-    final int ind = index;
-    Thread thread = new Thread(new Runnable() {
-    @Override
-    public void run() {
-        if (MFSound.getSeFlag()) {
-            if (longSeplayer != null) {
-                longSeplayer.stop();
-                longSeplayer.close();
-            }
-            longSeplayer = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
-            longSeplayer.realize();
-            longSeplayer.prefetch();
-            longSeplayer.setLoop(false);
-            if (volume == 0) {
-                longSeplayer.setVolume(0);
-            } else {
-                longSeplayer.setVolume(100);
-            }
-            longSeplayer.start();
+        final int ind = index;
+        if (!seIndexValid(ind)) {
+            return;
         }
-        }
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                synchronized (sePlayerLock) {
+                    try {
+                        if (!MFSound.getSeFlag()) {
+                            return;
+                        }
+                        MFPlayer old = longSeplayer;
+                        longSeplayer = null;
+                        closePlayerQuietly(old);
+                        MFPlayer p = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
+                        p.realize();
+                        p.prefetch();
+                        p.setLoop(false);
+                        p.setVolume(volume == 0 ? 0 : 100);
+                        p.start();
+                        longSeplayer = p;
+                    } catch (Exception e) {
+                    }
+                }
+            }
         });
         thread.start();
     }
 
     public void stopLongSe() {
-        if (this.longSeplayer != null) {
-            this.longSeplayer.stop();
-            this.longSeplayer.deallocate();
-            this.longSeplayer.close();
-            this.longSeplayer = null;
+        synchronized (this.sePlayerLock) {
+            try {
+                MFPlayer old = this.longSeplayer;
+                this.longSeplayer = null;
+                closePlayerQuietly(old);
+            } catch (Exception e) {
+            }
         }
     }
 
     public void playLoopSe(int index) {
-    final int ind = index;
-    Thread thread = new Thread(new Runnable() {
-    @Override
-    public void run() {
-        if (MFSound.getSeFlag() && !isLoopSePlaying()) {
-        try {
-            if (seplayer != null) {
-                seplayer.stop();
-                seplayer.close();
+        final int ind = index;
+        if (!seIndexValid(ind) || !MFSound.getSeFlag()) {
+            return;
+        }
+        synchronized (this.sePlayerLock) {
+            if (seAlreadyActive(ind, true)) {
+                return;
             }
-            seplayer = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
-            seIndex = ind;
-            seplayer.realize();
-            seplayer.prefetch();
-            seplayer.setLoop(true);
-            if (volume == 0) {
-                seplayer.setVolume(0);
-            } else {
-                seplayer.setVolume(100);
+            this.seBusy = true;
+        }
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                synchronized (sePlayerLock) {
+                    try {
+                        if (!MFSound.getSeFlag()) {
+                            return;
+                        }
+                        MFPlayer old = seplayer;
+                        seplayer = null;
+                        closePlayerQuietly(old);
+                        MFPlayer p = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
+                        seIndex = ind;
+                        p.realize();
+                        p.prefetch();
+                        p.setLoop(true);
+                        p.setVolume(volume == 0 ? 0 : 100);
+                        p.start();
+                        seplayer = p;
+                    } catch (Exception e) {
+                    } finally {
+                        seBusy = false;
+                    }
+                }
             }
-            seplayer.start();
-        } catch (Exception e) {
-        }
-        }
-        }
         });
         thread.start();
     }
 
     public void playSequenceSe(int index) {
-    final int ind = index;
-    Thread thread = new Thread(new Runnable() {
-    @Override
-    public void run() {
-        if (MFSound.getSeFlag() && !isLoopSePlaying()) {
-            if (seplayer != null) {
-                seplayer.stop();
-                seplayer.close();
-            }
-            seplayer = null;
-            seplayer = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
-            seIndex = ind;
-            seplayer.realize();
-            if (seplayer != null) {
-            seplayer.prefetch();
-            seplayer.setLoop(false);
-            if (volume == 0) {
-                seplayer.setVolume(0);
-            } else {
-                seplayer.setVolume(100);
-            }
-            seplayer.start();
-            }
+        final int ind = index;
+        if (!seIndexValid(ind) || !MFSound.getSeFlag()) {
+            return;
         }
+        synchronized (this.sePlayerLock) {
+            if (seAlreadyActive(ind, false)) {
+                return;
+            }
+            this.seBusy = true;
         }
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                synchronized (sePlayerLock) {
+                    try {
+                        if (!MFSound.getSeFlag()) {
+                            return;
+                        }
+                        if (seplayer != null && seIndex == ind && seplayer.getState() == 3) {
+                            return;
+                        }
+                        MFPlayer old = seplayer;
+                        seplayer = null;
+                        closePlayerQuietly(old);
+                        MFPlayer p = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
+                        seIndex = ind;
+                        p.realize();
+                        p.prefetch();
+                        p.setLoop(false);
+                        p.setVolume(volume == 0 ? 0 : 100);
+                        p.start();
+                        seplayer = p;
+                    } catch (Exception e) {
+                    } finally {
+                        seBusy = false;
+                    }
+                }
+            }
         });
         thread.start();
     }
 
     public void preLoadSequenceSe(int index) {
-    final int ind = index;
-    Thread thread = new Thread(new Runnable() {
-    @Override
-    public void run() {
-        if (MFSound.getSeFlag() && !isLoopSePlaying()) {
-            if (seplayer != null) {
-                seplayer.stop();
-                seplayer.close();
-            }
-            seplayer = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
-            seIndex = ind;
-            seplayer.realize();
-            seplayer.prefetch();
-            seplayer.setLoop(false);
-            if (volume == 0) {
-                seplayer.setVolume(0);
-            } else {
-                seplayer.setVolume(100);
-            }
+        final int ind = index;
+        if (!seIndexValid(ind) || !MFSound.getSeFlag()) {
+            return;
         }
-        }
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                synchronized (sePlayerLock) {
+                    try {
+                        if (!MFSound.getSeFlag() || isLoopSePlaying()) {
+                            return;
+                        }
+                        MFPlayer old = seplayer;
+                        seplayer = null;
+                        closePlayerQuietly(old);
+                        MFPlayer p = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[ind], true);
+                        seIndex = ind;
+                        p.realize();
+                        p.prefetch();
+                        p.setLoop(false);
+                        p.setVolume(volume == 0 ? 0 : 100);
+                        seplayer = p;
+                    } catch (Exception e) {
+                    }
+                }
+            }
         });
         thread.start();
     }
 
     public void playSequenceSeSingle() {
-    Thread thread = new Thread(new Runnable() {
-    @Override
-    public void run() {
-        if (MFSound.getSeFlag() && !isLoopSePlaying()) {
-            if (seplayer != null) {
-                seplayer.stop();
-                seplayer.close();
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                synchronized (sePlayerLock) {
+                    try {
+                        if (!MFSound.getSeFlag() || seplayer == null) {
+                            return;
+                        }
+                        seplayer.start();
+                    } catch (Exception e) {
+                    }
+                }
             }
-            seplayer.start();
-        }
-        }
         });
         thread.start();
     }
 
     public void stopLoopSe() {
-    try {
-        if (MFSound.getSeFlag() && isLoopSePlaying()) {
-            this.seplayer.stop();
-            this.seplayer.deallocate();
-            this.seplayer.close();
-            this.seplayer = null;
+        synchronized (this.sePlayerLock) {
+            try {
+                MFPlayer old = this.seplayer;
+                this.seplayer = null;
+                closePlayerQuietly(old);
+            } catch (Exception e) {
             }
-        } catch (Exception e) {
         }
     }
 
     public void resumeLoopSe() {
-    Thread thread = new Thread(new Runnable() {
-    @Override
-    public void run() {
-        if (MFSound.getSeFlag()) {
-            if (seplayer != null) {
-                seplayer.stop();
-                seplayer.close();
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                synchronized (sePlayerLock) {
+                    try {
+                        if (!MFSound.getSeFlag() || !seIndexValid(seIndex)) {
+                            return;
+                        }
+                        MFPlayer old = seplayer;
+                        seplayer = null;
+                        closePlayerQuietly(old);
+                        MFPlayer p = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[seIndex], true);
+                        p.realize();
+                        p.prefetch();
+                        p.setLoop(true);
+                        p.setVolume(volume == 0 ? 0 : 100);
+                        p.start();
+                        seplayer = p;
+                    } catch (Exception e) {
+                    }
+                }
             }
-            seplayer = MFPlayer.createMFPlayer(SE_PATH + SE_NAME[seIndex], true);
-            seplayer.realize();
-            seplayer.prefetch();
-            seplayer.setLoop(true);
-            if (volume == 0) {
-                seplayer.setVolume(0);
-            } else {
-                seplayer.setVolume(100);
-            }
-            seplayer.start();
-        }
-        }
         });
         thread.start();
     }
@@ -558,13 +632,12 @@ public class SoundSystem {
         if (!MFSound.getSeFlag()) {
             return false;
         }
-        if (this.seplayer == null) {
-            return false;
+        synchronized (this.sePlayerLock) {
+            if (this.seplayer == null) {
+                return false;
+            }
+            return this.seplayer.getState() == 3;
         }
-        if (this.seplayer.getState() == 3) {
-            return true;
-        }
-        return false;
     }
 
     public void setVolume(int vol) {

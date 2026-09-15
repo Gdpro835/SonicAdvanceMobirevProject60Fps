@@ -249,25 +249,27 @@ public final class MFPlayer implements MediaPlayer.OnCompletionListener {
     }
 
     public void close() {
-        switch (this.soundState) {
-            case 0:
-            case 1:
-                break;
-            case 2:
-                break;
-            case 3:
-                stop();
-                break;
-            default:
+        try {
+            if (this.soundState == 4) {
                 return;
+            }
+            if (this.soundState == 3) {
+                stop();
+            }
+            if (this.mPlayer != null) {
+                try {
+                    this.mPlayer.setOnCompletionListener((MediaPlayer.OnCompletionListener) null);
+                } catch (Exception e) {
+                }
+                try {
+                    this.mPlayer.release();
+                } catch (Exception e) {
+                }
+                this.mPlayer = null;
+            }
+            this.soundState = 4;
+        } catch (Exception e) {
         }
-        deallocate();
-        if (this.mPlayer != null) {
-            this.mPlayer.setOnCompletionListener((MediaPlayer.OnCompletionListener) null);
-            this.mPlayer.release();
-        }
-        this.mPlayer = null;
-        this.soundState = 4;
     }
 
     public long getMediaTime() {
