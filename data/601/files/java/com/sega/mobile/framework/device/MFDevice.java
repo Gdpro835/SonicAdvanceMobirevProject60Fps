@@ -407,11 +407,11 @@ started = true;
                 } else if (MFDevice.currentState != null) {
                     MFDevice.currentState.onTick();
                 }
+                if (MFDevice.clearBuffer) {
+                    MFDevice.clearScreen();
+                }
                 if (!MFDevice.shouldRenderDirectToGpu()) {
                     MFDevice.graphics.reset();
-                    if (MFDevice.clearBuffer) {
-                        MFDevice.clearScreen();
-                    }
                     MFDevice.renderGameTo(MFDevice.graphics);
                 }
                 MFDevice.mainCanvas.repaint();
@@ -630,6 +630,9 @@ started = true;
         boolean gpu = shouldRenderDirectToGpu() && g.isHardwareAccelerated() && nativeCanvas != null;
         if (gpu) {
             nativeCanvas.drawColor(-16777216);
+            if (clearBuffer && fontImage != null) {
+                fontImage.earseColor(0);
+            }
             renderPreLayers();
             for (int i = 1; i > 0; i--) {
                 blitLayerImage(g, preLayerImage[i - 1]);

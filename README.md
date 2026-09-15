@@ -11,5 +11,6 @@ On Android 6+ the game draws with `SurfaceHolder.lockHardwareCanvas()`:
 - Clip (`setClip`) uses a save/restore path that hardware Canvas accepts.
 - Bitmaps call `prepareToDraw()` so they can be uploaded as textures.
 - If a hardware canvas cannot be locked, the old CPU buffer blit is used.
+- Text still uses the `fontImage` overlay; that bitmap is erased every frame so loading tips do not stay after the tip window closes.
 
 Set `MFDevice.useGpu = false` to force the software path.
