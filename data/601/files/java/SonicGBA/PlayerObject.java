@@ -2873,7 +2873,7 @@ for (int xx = 0; xx < GameObject.objVecWidth; xx++) {
                   } else {
                      isOnlyBarOut = true;
                   }
-               } else {
+               } else if (systemClock % (long) Lib.FPS.SCALE == 0L) {
                   SoundSystem.getInstance().playSe(31);
                }
             }

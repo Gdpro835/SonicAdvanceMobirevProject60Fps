@@ -1734,7 +1734,7 @@ public class SpecialStageState extends State implements SSDef, BarWord {
 
                     if (this.ringScore == 0) {
                         SoundSystem.getInstance().playSe(32);
-                    } else {
+                    } else if (this.count % Lib.FPS.SCALE == 0) {
                         SoundSystem.getInstance().playSe(31);
                     }
 
