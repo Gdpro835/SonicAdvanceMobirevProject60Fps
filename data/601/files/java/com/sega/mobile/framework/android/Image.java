@@ -209,6 +209,7 @@ public class Image {
         Image img = new Image();
         img.mBitmap = Bitmap.createScaledBitmap(src, w, h, true);
         src.recycle();
+        prepareForGpu(img.mBitmap);
         return img;
     }
 
