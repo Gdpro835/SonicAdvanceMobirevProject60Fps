@@ -108,12 +108,43 @@ class BossF1 extends BossObject {
    private int fpsRemBallPos;
    private int fpsRemDropVel;
 
+   private static final int[] SWING_Y_TABLE = new int[]{
+      4992, 4906, 4743, 4511, 4219, 3875, 3488, 3066, 2618, 2152, 1677, 1201, 733, 281, -146, -540, -892, -1194
+   };
+
+   private static final int[] ENTER_SWING_Y_TABLE = new int[]{
+      4992, 4950, 4823, 4618, 4341, 4000, 3609, 3179, 2726, 2266, 1813, 1383, 992, 651, 374, 169, 42, 0
+   };
+
    /** Project 60fps: шаг падающего шара за тик с переносом остатка. */
    private int fpsDropStepY(int perFrameAmount) {
       this.fpsRemDropVel += perFrameAmount;
       int applied = this.fpsRemDropVel >> Lib.FPS.SHIFT;
       this.fpsRemDropVel -= applied << Lib.FPS.SHIFT;
       return applied;
+   }
+
+   /** Project 60fps: интерполяция Y координаты маятника при подъеме вверх (4992 -> -1194). */
+   private int getSwingYUp(int tick) {
+      if (tick <= 0) return 4992;
+      int f = tick >> Lib.FPS.SHIFT;
+      int rem = tick & (Lib.FPS.SCALE - 1);
+      if (f >= 17) return -1194;
+      return (SWING_Y_TABLE[f] * (Lib.FPS.SCALE - rem) + SWING_Y_TABLE[f + 1] * rem) >> Lib.FPS.SHIFT;
+   }
+
+   /** Project 60fps: симметричная интерполяция Y координаты маятника при спуске вниз (-1194 -> 4992). */
+   private int getSwingYDown(int tick) {
+      return 3798 - getSwingYUp(tick);
+   }
+
+   /** Project 60fps: интерполяция Y координаты маятника при появлении босса (4992 -> 0). */
+   private int getEnterSwingY(int tick) {
+      if (tick <= 0) return 4992;
+      int f = tick >> Lib.FPS.SHIFT;
+      int rem = tick & (Lib.FPS.SCALE - 1);
+      if (f >= 17) return 0;
+      return (ENTER_SWING_Y_TABLE[f] * (Lib.FPS.SCALE - rem) + ENTER_SWING_Y_TABLE[f + 1] * rem) >> Lib.FPS.SHIFT;
    }
    private AnimationDrawer machineDrawer;
    private int machine_state;
@@ -522,18 +553,9 @@ class BossF1 extends BossObject {
                if (this.show_step != 5) {
                   if (this.frameCn < 17 * Lib.FPS.SCALE) {
                      ++this.frameCn;
-                  } else {
-                     this.frameCn = 17 * Lib.FPS.SCALE;
                   }
-
-                  if (this.frameCn < 8 * Lib.FPS.SCALE) {
-                     this.ballvely -= 96 / Lib.FPS.SCALE;
-                  } else if (this.frameCn < 16 * Lib.FPS.SCALE) {
-                     this.ballvely += 96 / Lib.FPS.SCALE;
-                  } else {
-                     this.ballvely = 0;
-                     this.oppoBallPosY = 0;
-                  }
+                  this.oppoBallPosY = this.getEnterSwingY(this.frameCn);
+                  this.oppoBallPosX = (int)Math.sqrt(4992 * 4992 - this.oppoBallPosY * this.oppoBallPosY);
                }
 
                if (this.posX > 54528) {
@@ -555,16 +577,9 @@ class BossF1 extends BossObject {
                if (this.state != 2) {
                   if (this.frameCn < 17 * Lib.FPS.SCALE) {
                      ++this.frameCn;
-                     this.Accy = (BALL_ACC_MAX - (this.frameCn * 22) / Lib.FPS.SCALE) / (2 * Lib.FPS.SCALE);
-                     if (this.Accy < 0) {
-                        this.Accy = 0;
-                     }
-
-                     this.ballvely += this.Accy;
-                  } else {
-                     this.frameCn = 17 * Lib.FPS.SCALE;
-                     this.oppoBallPosY = 4992;
                   }
+                  this.oppoBallPosY = 4992 - this.getEnterSwingY(this.frameCn);
+                  this.oppoBallPosX = (int)Math.sqrt(4992 * 4992 - this.oppoBallPosY * this.oppoBallPosY);
                }
 
                if (this.posX > 53760) {
@@ -580,7 +595,6 @@ class BossF1 extends BossObject {
                   this.ballvely = 0;
                   this.machine_state = 0;
                   this.fpsResetMove();
-                  this.fpsRemBallPos = 0;
                }
 
                this.balllogic(true);
@@ -593,13 +607,9 @@ class BossF1 extends BossObject {
             case 0:
                if (this.frameCn < 17 * Lib.FPS.SCALE) {
                   ++this.frameCn;
-                  this.Accy = (BALL_ACC_MAX - (this.frameCn * 17) / Lib.FPS.SCALE) / (2 * Lib.FPS.SCALE);
-                  this.ballvely -= this.Accy;
-               } else {
-                  this.frameCn = 17 * Lib.FPS.SCALE;
-                  this.oppoBallPosY = 0;
-                  this.oppoBallPosX = 4992;
                }
+               this.oppoBallPosY = this.getSwingYUp(this.frameCn);
+               this.oppoBallPosX = -(int)Math.sqrt(4992 * 4992 - this.oppoBallPosY * this.oppoBallPosY);
 
                if (this.posY > 42880) {
                   this.posY += this.fpsMoveY(this.vely);
@@ -614,7 +624,6 @@ class BossF1 extends BossObject {
                   this.directTrans = true;
                   this.ballvely = 0;
                   this.fpsResetMove();
-                  this.fpsRemBallPos = 0;
                }
 
                this.balllogic(false);
@@ -622,13 +631,9 @@ class BossF1 extends BossObject {
             case 1:
                if (this.frameCn < 17 * Lib.FPS.SCALE) {
                   ++this.frameCn;
-                  this.Accy = (BALL_ACC_MAX - (this.frameCn * 17) / Lib.FPS.SCALE) / (2 * Lib.FPS.SCALE);
-                  this.ballvely += this.Accy;
-               } else {
-                  this.frameCn = 17 * Lib.FPS.SCALE;
-                  this.oppoBallPosY = 4992;
-                  this.oppoBallPosX = 0;
                }
+               this.oppoBallPosY = this.getSwingYDown(this.frameCn);
+               this.oppoBallPosX = -(int)Math.sqrt(4992 * 4992 - this.oppoBallPosY * this.oppoBallPosY);
 
                if (this.posX < 56832) {
                   this.posX += this.fpsMoveX(this.velocity);
@@ -642,7 +647,6 @@ class BossF1 extends BossObject {
                   this.frameCn = 0;
                   this.ballvely = 0;
                   this.fpsResetMove();
-                  this.fpsRemBallPos = 0;
                }
 
                this.balllogic(false);
@@ -650,13 +654,9 @@ class BossF1 extends BossObject {
             case 2:
                if (this.frameCn < 17 * Lib.FPS.SCALE) {
                   ++this.frameCn;
-                  this.Accy = (BALL_ACC_MAX - (this.frameCn * 17) / Lib.FPS.SCALE) / (2 * Lib.FPS.SCALE);
-                  this.ballvely -= this.Accy;
-               } else {
-                  this.frameCn = 17 * Lib.FPS.SCALE;
-                  this.oppoBallPosY = 0;
-                  this.oppoBallPosX = 4992;
                }
+               this.oppoBallPosY = this.getSwingYUp(this.frameCn);
+               this.oppoBallPosX = (int)Math.sqrt(4992 * 4992 - this.oppoBallPosY * this.oppoBallPosY);
 
                if (this.posY > 42880) {
                   this.posY += this.fpsMoveY(this.vely);
@@ -671,7 +671,6 @@ class BossF1 extends BossObject {
                   this.face_state = 0;
                   this.ballvely = 0;
                   this.fpsResetMove();
-                  this.fpsRemBallPos = 0;
                }
 
                this.balllogic(true);
@@ -679,13 +678,9 @@ class BossF1 extends BossObject {
             case 3:
                if (this.frameCn < 17 * Lib.FPS.SCALE) {
                   ++this.frameCn;
-                  this.Accy = (BALL_ACC_MAX - (this.frameCn * 17) / Lib.FPS.SCALE) / (2 * Lib.FPS.SCALE);
-                  this.ballvely += this.Accy;
-               } else {
-                  this.frameCn = 17 * Lib.FPS.SCALE;
-                  this.oppoBallPosY = 4992;
-                  this.oppoBallPosX = 0;
                }
+               this.oppoBallPosY = this.getSwingYDown(this.frameCn);
+               this.oppoBallPosX = (int)Math.sqrt(4992 * 4992 - this.oppoBallPosY * this.oppoBallPosY);
 
                if (this.posX > 53760) {
                   this.posX += this.fpsMoveX(this.velocity);
@@ -699,7 +694,6 @@ class BossF1 extends BossObject {
                   this.frameCn = 0;
                   this.ballvely = 0;
                   this.fpsResetMove();
-                  this.fpsRemBallPos = 0;
                }
 
                this.balllogic(true);
@@ -730,7 +724,7 @@ class BossF1 extends BossObject {
                this.drop_cnt = 3;
                this.fpsRemDropVel = 0;
             } else if (this.drop_cnt != 3) {
-               this.drop_vely += GRAVITY;
+               this.drop_vely += ORIGINAL_GRAVITY / Lib.FPS.SCALE;
                var5 = this.ballPos[4];
                var5[1] += var10;
                this.ball.setEnd();

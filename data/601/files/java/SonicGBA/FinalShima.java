@@ -37,6 +37,7 @@ class FinalShima extends GimmickObject {
       this.velY = 0;
       this.dropState = 0;
       this.used = false;
+      this.fpsResetMove();
    }
 
    public void doWhileCollision(PlayerObject var1, int var2) {
@@ -44,6 +45,7 @@ class FinalShima extends GimmickObject {
       case 1:
          var1.beStop(this.collisionRect.y0, 1, this);
          this.used = true;
+         break;
       case 2:
       case 3:
       default:
@@ -58,7 +60,7 @@ class FinalShima extends GimmickObject {
    }
 
    public void doWhileNoCollision() {
-      if (player.collisionState == 1 || player.collisionState == 0) {
+      if (this.dropState == 0 && (player.collisionState == 1 || player.collisionState == 0)) {
          this.used = false;
       }
 
@@ -76,12 +78,12 @@ class FinalShima extends GimmickObject {
    }
 
    public void logic() {
+      int oldY = this.posY;
       if (this.dropState != 2) {
          if (this.used) {
-            // Project 60fps: опускание платформы -- геометрическое приближение,
-            // знаменатель расширен в 4 раза, пол смещения снижен до 1.
+            // Project 60fps: опускание платформы -- геометрическое приближение
             this.posY = MyAPI.calNextPosition((double)this.posY, (double)(this.posOriginalY + 768), 1, 6 * Lib.FPS.SCALE, 1.0D);
-            if (this.posY > this.posOriginalY + 192 && this.dropState == 0) {
+            if (this.posY > this.posOriginalY + 64 && this.dropState == 0) {
                this.dropState = 1;
                this.startTime = System.currentTimeMillis();
             }
@@ -99,10 +101,12 @@ class FinalShima extends GimmickObject {
       } else {
          this.currentTime = System.currentTimeMillis();
          if (this.currentTime - this.startTime >= 1000L) {
-            this.velY += this.fpsAccY(ORIGINAL_GRAVITY); // Project 60fps: GRAVITY=ORIGINAL_GRAVITY/SCALE, fpsMoveY тоже /SCALE — было двойное деление
+            this.velY += this.fpsAccY(ORIGINAL_GRAVITY);
             this.posY += this.fpsMoveY(this.velY);
          }
       }
+
+      this.checkWithPlayer(this.posX, oldY, this.posX, this.posY);
 
       if (this.isAwayFromCameraInWidth()) {
          this.resetShima();
