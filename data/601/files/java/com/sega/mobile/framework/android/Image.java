@@ -95,6 +95,15 @@ public class Image {
         return img;
     }
 
+    public static void prepareForGpu(Bitmap bitmap) {
+        if (bitmap != null) {
+            try {
+                bitmap.prepareToDraw();
+            } catch (Exception e) {
+            }
+        }
+    }
+
     public Bitmap getBitmap() {
         return this.mBitmap;
     }
