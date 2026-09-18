@@ -337,7 +337,10 @@ public class SoundSystem {
         MFSound.playBgm(fileName, loop);
         System.out.println("play bgm");
         if (this.mediaTime > 0) {
-            MFSound.getCurrentBgm().setMediaTime((int) this.mediaTime);
+            MFPlayer cur = MFSound.getCurrentBgm();
+            if (cur != null) {
+                cur.setMediaTime((int) this.mediaTime);
+            }
             System.out.println("mediaTime:" + this.mediaTime);
             this.mediaTime = 0;
         }
