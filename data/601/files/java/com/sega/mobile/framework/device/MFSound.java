@@ -1,13 +1,17 @@
 package com.sega.mobile.framework.device;
 
+import android.content.res.AssetFileDescriptor;
+import android.content.res.AssetManager;
 import android.media.AudioManager;
+import android.media.SoundPool;
 import com.sega.mobile.framework.MFMain;
 import com.sega.mobile.framework.utility.MFUtility;
+import java.util.Hashtable;
 import java.util.Vector;
 import State.TitleState;
 
 public final class MFSound {
-    public static int seLimit = 15;
+    public static int seLimit = 16;
     public static final int LEVEL_MAX = 15;
     public static final int VOLUME_MAX = 100;
 
@@ -30,14 +34,163 @@ public final class MFSound {
 
     private static AudioManager mManager;
 
-    private static Vector<MFPlayer> soundVector;
-    private static Vector<MFPlayer> seVector;
-    private static Vector<MFPlayer> prefetchedSeVector;
+    private static SoundPool sePool;
+    private static final Hashtable<String, Integer> seIds = new Hashtable<>();
+    private static final Hashtable<Integer, Boolean> seReady = new Hashtable<>();
+    private static final Vector<PendingSe> pendingSe = new Vector<>();
+    private static final Hashtable<String, MFPlayer> bgmCache = new Hashtable<>();
+    private static final int[] recentStreams = new int[32];
+    private static int recentPos;
 
-    private static MFPlayer createMFPlayer(String url) {
-        MFPlayer player = MFPlayer.createMFPlayer(url, false);
-        soundVector.addElement(player);
-        return player;
+    private static final class PendingSe {
+        String url;
+        int priority;
+        int loop;
+
+        PendingSe(String url, int priority, int loop) {
+            this.url = url;
+            this.priority = priority;
+            this.loop = loop;
+        }
+    }
+
+    protected static void init() {
+        bgmFlag = true;
+        seFlag = true;
+        deviceInterrupted = false;
+        resumeFlag = false;
+        suspendFlag = false;
+        bgmPlaying = false;
+        bgmStarted = false;
+        soundVolume = 100;
+        mManager = (AudioManager) MFMain.getInstance().getSystemService("audio");
+        createSePool();
+    }
+
+    private static void createSePool() {
+        synchronized (LOCK) {
+            try {
+                if (sePool != null) {
+                    sePool.release();
+                }
+            } catch (Exception e) {
+            }
+            sePool = new SoundPool(seLimit, AudioManager.STREAM_MUSIC, 0);
+            seIds.clear();
+            seReady.clear();
+            pendingSe.removeAllElements();
+            sePool.setOnLoadCompleteListener(new SoundPool.OnLoadCompleteListener() {
+                public void onLoadComplete(SoundPool soundPool, int sampleId, int status) {
+                    synchronized (LOCK) {
+                        if (status == 0) {
+                            seReady.put(Integer.valueOf(sampleId), Boolean.TRUE);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    private static String assetPath(String url) {
+        if (url == null) {
+            return "";
+        }
+        if (url.startsWith("/")) {
+            return url.substring(1);
+        }
+        return url;
+    }
+
+    private static int ensureSeLoaded(String url) {
+        Integer id = seIds.get(url);
+        if (id != null) {
+            return id.intValue();
+        }
+        if (sePool == null) {
+            return 0;
+        }
+        try {
+            AssetManager assets = MFMain.getInstance().getAssets();
+            AssetFileDescriptor afd = assets.openFd(assetPath(url));
+            int loaded = sePool.load(afd, 1);
+            afd.close();
+            if (loaded > 0) {
+                seIds.put(url, Integer.valueOf(loaded));
+                seReady.put(Integer.valueOf(loaded), Boolean.FALSE);
+            }
+            return loaded;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static boolean isSeReady(int soundId) {
+        if (soundId <= 0) {
+            return false;
+        }
+        Boolean ready = seReady.get(Integer.valueOf(soundId));
+        return ready != null && ready.booleanValue();
+    }
+
+    private static float seGain() {
+        if (!seFlag || soundVolume <= 0) {
+            return 0.0f;
+        }
+        return 1.0f;
+    }
+
+    private static int playSeStream(String url, int priority, int loop) {
+        if (!seFlag || sePool == null) {
+            return 0;
+        }
+        int soundId = ensureSeLoaded(url);
+        if (soundId <= 0) {
+            return 0;
+        }
+        if (!isSeReady(soundId)) {
+            pendingSe.addElement(new PendingSe(url, priority, loop));
+            return 0;
+        }
+        float vol = seGain();
+        if (vol <= 0.0f) {
+            return 0;
+        }
+        try {
+            int streamId = sePool.play(soundId, vol, vol, priority + 1, loop, 1.0f);
+            if (streamId > 0) {
+                recentStreams[recentPos] = streamId;
+                recentPos = (recentPos + 1) % recentStreams.length;
+            }
+            return streamId;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static void flushPendingSe() {
+        if (pendingSe.isEmpty() || sePool == null || !seFlag) {
+            return;
+        }
+        for (int i = 0; i < pendingSe.size(); ) {
+            PendingSe p = pendingSe.elementAt(i);
+            Integer id = seIds.get(p.url);
+            if (id == null || !isSeReady(id.intValue())) {
+                i++;
+                continue;
+            }
+            pendingSe.removeElementAt(i);
+            playSeStream(p.url, p.priority, p.loop);
+        }
+    }
+
+    protected static void tick() {
+        synchronized (LOCK) {
+            try {
+                flushPendingSe();
+                tickBgmLocked();
+            } catch (Exception e) {
+            }
+        }
     }
 
     private static boolean updateBgm(MFPlayer player) {
@@ -58,137 +211,41 @@ public final class MFSound {
         }
     }
 
-    private static boolean updateSound(MFPlayer player) {
-        switch (player.getState()) {
-            case 0:
-            case 4:
-                player.realize();
-                return false;
-            case 1:
-                player.prefetch();
-                return false;
-            case 2:
-                return true;
-            case 3:
-            default:
-                return false;
-        }
-    }
-
-    protected static void init() {
-        bgmFlag = true;
-        seFlag = true;
-        deviceInterrupted = false;
-        resumeFlag = false;
-        suspendFlag = false;
-        bgmPlaying = false;
-        bgmStarted = false;
-        soundVolume = 100;
-
-        soundVector = new Vector<>();
-        seVector = new Vector<>();
-        prefetchedSeVector = new Vector<>();
-
-        mManager = (AudioManager) MFMain.getInstance().getSystemService("audio");
-    }
-
-    protected static void tick() {
-        synchronized (LOCK) {
-            try {
-                tickLocked();
-            } catch (Exception e) {
-            }
-        }
-    }
-
-    private static void tickLocked() {
-        if (soundVector == null) {
+    private static void tickBgmLocked() {
+        if (!bgmFlag) {
             return;
         }
-
-        for (int i = 0; i < soundVector.size(); i++) {
-            MFPlayer p = soundVector.elementAt(i);
-            if (p != null) {
-                p.tick();
+        if (suspendFlag) {
+            if (!deviceInterrupted) {
+                deviceInterrupted = true;
+                stopBgmLocked();
             }
+            suspendFlag = false;
         }
-
-        for (int i = seVector.size() - 1; i >= 0; i--) {
-            if (i >= seVector.size()) {
-                continue;
+        if (resumeFlag) {
+            if (deviceInterrupted) {
+                deviceInterrupted = false;
+                resumeBgmLocked();
             }
-            MFPlayer se = seVector.elementAt(i);
-            if (se != null && updateSound(se) && se.getState() == 2) {
-                seVector.removeElementAt(i);
-                if (!prefetchedSeVector.contains(se)) {
-                    prefetchedSeVector.addElement(se);
-                }
-            }
+            resumeFlag = false;
         }
-
-        if (bgmFlag) {
-            if (suspendFlag) {
-                if (!deviceInterrupted) {
-                    deviceInterrupted = true;
-                    stopBgmLocked();
-                }
-                suspendFlag = false;
-            }
-
-            if (resumeFlag) {
-                if (deviceInterrupted) {
-                    deviceInterrupted = false;
-                    resumeBgmLocked();
-                }
-                resumeFlag = false;
-            }
-
-            if (nextBgm != null) {
-                if (bgm != null && !nextBgm.soundUrl.equals(bgm.soundUrl)) {
-                    try {
-                        bgm.stop();
-                        bgm.deallocate();
-                        bgm.close();
-                    } catch (Exception e) {
-                    }
-                }
-                bgm = nextBgm;
-                nextBgm = null;
-                bgmStarted = false;
-            }
-
-            if (bgm != null && (bgm.isLoop() || !bgmStarted)) {
-                bgmStarted = updateBgm(bgm);
-            }
-
-            if (bgm != null && !bgm.isLoop() && bgmStarted && bgm.getState() == 2) {
-                bgmPlaying = false;
-                bgmStarted = false;
+        if (nextBgm != null) {
+            if (bgm != null && bgm != nextBgm) {
                 try {
-                    bgm.deallocate();
-                    bgm.close();
+                    bgm.stop();
                 } catch (Exception e) {
                 }
-                bgm = null;
             }
+            bgm = nextBgm;
+            nextBgm = null;
+            bgmStarted = false;
         }
-
-        if (prefetchedSeVector.size() < seLimit) {
-            if (seFlag) {
-                while (!seVector.isEmpty() && prefetchedSeVector.size() < seLimit) {
-                    MFPlayer player = seVector.elementAt(0);
-                    if (player != null && updateSound(player)) {
-                        seVector.removeElementAt(0);
-                        if (!prefetchedSeVector.contains(player)) {
-                            prefetchedSeVector.addElement(player);
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                seVector.removeAllElements();
-            }
+        if (bgm != null && (bgm.isLoop() || !bgmStarted)) {
+            bgmStarted = updateBgm(bgm);
+        }
+        if (bgm != null && !bgm.isLoop() && bgmStarted && bgm.getState() == 2) {
+            bgmPlaying = false;
+            bgmStarted = false;
         }
     }
 
@@ -202,11 +259,16 @@ public final class MFSound {
 
     public static void setVolume(int volume) {
         soundVolume = MFUtility.getValueInRange(volume, 0, 100);
-        int maxVolume = mManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        mManager.setStreamVolume(AudioManager.STREAM_MUSIC, (soundVolume * maxVolume) / 100, 0);
+        if (mManager != null) {
+            int maxVolume = mManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            mManager.setStreamVolume(AudioManager.STREAM_MUSIC, (soundVolume * maxVolume) / 100, 0);
+        }
     }
 
     public static int getVolume() {
+        if (mManager == null) {
+            return soundVolume;
+        }
         int max = mManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
         int current = mManager.getStreamVolume(AudioManager.STREAM_MUSIC);
         soundVolume = MFUtility.getValueInRange((current * 100) / max, 0, 100);
@@ -214,10 +276,15 @@ public final class MFSound {
     }
 
     public static void setLevel(int level) {
-        mManager.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0);
+        if (mManager != null) {
+            mManager.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0);
+        }
     }
 
     public static int getLevel() {
+        if (mManager == null) {
+            return 0;
+        }
         return mManager.getStreamVolume(AudioManager.STREAM_MUSIC);
     }
 
@@ -235,11 +302,7 @@ public final class MFSound {
     public static void setSeFlag(boolean enabled) {
         seFlag = enabled;
         if (!enabled) {
-            synchronized (LOCK) {
-                if (seVector != null) {
-                    seVector.removeAllElements();
-                }
-            }
+            stopAllSe();
         }
     }
 
@@ -249,41 +312,72 @@ public final class MFSound {
 
     public static void preloadSound(String url) {
         synchronized (LOCK) {
-            if (soundVector == null) {
+            ensureSeLoaded(url);
+        }
+    }
+
+    public static void preloadAllSe(String path, String[] names) {
+        synchronized (LOCK) {
+            if (sePool == null) {
+                createSePool();
+            }
+            if (names == null) {
                 return;
             }
-            for (int i = 0; i < soundVector.size(); i++) {
-                MFPlayer player = soundVector.elementAt(i);
-                if (player != null && player.soundUrl.equals(url)) {
-                    return;
-                }
-            }
-            MFPlayer player = createMFPlayer(url);
-            player.realize();
-            if (player != null) {
-                player.prefetch();
+            for (int i = 0; i < names.length; i++) {
+                ensureSeLoaded(path + names[i]);
             }
         }
     }
 
-    public static void playBgm(String url, boolean loop) {
-        synchronized (LOCK) {
-            nextBgm = null;
-            if (soundVector != null) {
-                for (int i = 0; i < soundVector.size(); i++) {
-                    MFPlayer player = soundVector.elementAt(i);
-                    if (player != null && player.soundUrl.equals(url)) {
-                        nextBgm = player;
-                        break;
-                    }
+    private static void evictBgmCache(String keepUrl) {
+        if (bgmCache.size() < 6) {
+            return;
+        }
+        Vector<String> drop = new Vector<>();
+        java.util.Enumeration<String> keys = bgmCache.keys();
+        while (keys.hasMoreElements()) {
+            String key = keys.nextElement();
+            if (key.equals(keepUrl)) {
+                continue;
+            }
+            if (bgm != null && key.equals(bgm.soundUrl)) {
+                continue;
+            }
+            if (lastBgm != null && key.equals(lastBgm.soundUrl)) {
+                continue;
+            }
+            drop.addElement(key);
+        }
+        for (int i = 0; i < drop.size() && bgmCache.size() >= 6; i++) {
+            MFPlayer old = bgmCache.remove(drop.elementAt(i));
+            if (old != null) {
+                try {
+                    old.close();
+                } catch (Exception e) {
                 }
             }
-            if (nextBgm == null) {
-                nextBgm = createMFPlayer(url);
-            }
-            nextBgm.setLoop(loop);
+        }
+    }
+
+    private static MFPlayer getCachedBgm(String url) {
+        MFPlayer player = bgmCache.get(url);
+        if (player != null && player.getState() != 4) {
+            return player;
+        }
+        player = MFPlayer.createMFPlayer(url, false);
+        bgmCache.put(url, player);
+        evictBgmCache(url);
+        return player;
+    }
+
+    public static void playBgm(String url, boolean loop) {
+        synchronized (LOCK) {
+            MFPlayer player = getCachedBgm(url);
+            player.setLoop(loop);
+            nextBgm = player;
             bgmPlaying = true;
-            lastBgm = nextBgm;
+            lastBgm = player;
         }
     }
 
@@ -297,15 +391,12 @@ public final class MFSound {
         try {
             if (bgm != null) {
                 bgm.stop();
-                bgm.deallocate();
-                bgm.close();
             }
         } catch (Exception ignored) {
         } finally {
-            bgm = null;
-            nextBgm = null;
             bgmPlaying = false;
             bgmStarted = false;
+            nextBgm = null;
         }
     }
 
@@ -337,84 +428,72 @@ public final class MFSound {
         return bgmPlaying;
     }
 
-    public static void playSe(String url) {
-        playSe(url, 0);
+    public static int playSe(String url) {
+        return playSe(url, 0);
     }
 
-    public static void playSe(String url, int priority) {
+    public static int playSe(String url, int priority) {
         if (!seFlag) {
-            return;
+            return 0;
         }
-
-        if (url.contains("se_103") && TitleState.characterslots == 2 && MFMain.tails == 7) {
+        if (url != null && url.contains("se_103") && TitleState.characterslots == 2 && MFMain.tails == 7) {
             url = "/se/shc.ogg";
             MFMain.tails++;
             priority = 1;
         }
-
         synchronized (LOCK) {
             try {
-                playSeLocked(url, priority);
+                return playSeStream(url, priority, 0);
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+    }
+
+    public static int playLoopSe(String url) {
+        if (!seFlag) {
+            return 0;
+        }
+        synchronized (LOCK) {
+            try {
+                return playSeStream(url, 1, -1);
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+    }
+
+    public static void stopStream(int streamId) {
+        if (streamId <= 0 || sePool == null) {
+            return;
+        }
+        synchronized (LOCK) {
+            try {
+                sePool.stop(streamId);
             } catch (Exception e) {
             }
         }
     }
 
-    private static void playSeLocked(String url, int priority) {
-        if (soundVector == null) {
-            return;
-        }
-
-        MFPlayer idle = null;
-        MFPlayer playing = null;
-        int playingCount = 0;
-        for (int i = 0; i < soundVector.size(); i++) {
-            MFPlayer p = soundVector.elementAt(i);
-            if (p == null || p.soundUrl == null || !p.soundUrl.equals(url)) {
-                continue;
-            }
-            int state = p.getState();
-            if (state == 2 && idle == null) {
-                idle = p;
-            } else if (state == 3) {
-                playingCount++;
-                if (playing == null) {
-                    playing = p;
+    public static void stopAllSe() {
+        synchronized (LOCK) {
+            pendingSe.removeAllElements();
+            if (sePool != null) {
+                try {
+                    sePool.autoPause();
+                    sePool.autoResume();
+                } catch (Exception e) {
                 }
-            }
-        }
-
-        MFPlayer player = idle;
-        if (player == null) {
-            if (playingCount >= seLimit && playing != null) {
-                player = playing;
-            } else {
-                player = createMFPlayer(url);
-                player.realize();
-                if (player != null) {
-                    player.prefetch();
+                try {
+                    java.util.Enumeration<Integer> ids = seIds.elements();
+                    while (ids.hasMoreElements()) {
+                        Integer id = ids.nextElement();
+                        if (id != null) {
+                            sePool.stop(id.intValue());
+                        }
+                    }
+                } catch (Exception e) {
                 }
-            }
-        }
-
-        if (player == null) {
-            return;
-        }
-
-        player.soundPriority = priority;
-        player.setMediaTime(0);
-
-        if (player.getState() == 2 || player.getState() == 3) {
-            try {
-                player.start();
-            } catch (Exception e) {
-            }
-            if (!prefetchedSeVector.contains(player)) {
-                prefetchedSeVector.addElement(player);
-            }
-        } else {
-            if (!seVector.contains(player)) {
-                seVector.addElement(player);
             }
         }
     }
@@ -422,36 +501,37 @@ public final class MFSound {
     public static void releaseAllSound() {
         synchronized (LOCK) {
             try {
-                if (soundVector != null) {
-                    Vector<MFPlayer> temp = new Vector<>(soundVector);
-                    for (int i = 0; i < temp.size(); i++) {
-                        MFPlayer p = temp.elementAt(i);
-                        if (p != null) {
-                            try {
-                                p.close();
-                            } catch (Exception e) {
-                            }
+                java.util.Enumeration<MFPlayer> players = bgmCache.elements();
+                while (players.hasMoreElements()) {
+                    MFPlayer p = players.nextElement();
+                    if (p != null) {
+                        try {
+                            p.close();
+                        } catch (Exception e) {
                         }
                     }
-                    soundVector.removeAllElements();
-                }
-                if (seVector != null) {
-                    seVector.removeAllElements();
-                }
-                if (prefetchedSeVector != null) {
-                    prefetchedSeVector.removeAllElements();
                 }
             } catch (Exception e) {
             }
+            bgmCache.clear();
             bgm = null;
             nextBgm = null;
+            lastBgm = null;
+            bgmPlaying = false;
+            bgmStarted = false;
+            createSePool();
         }
     }
 
     public static void setBgm(MFPlayer player, boolean loop) {
         synchronized (LOCK) {
+            if (player != null) {
+                player.setLoop(loop);
+                if (player.soundUrl != null) {
+                    bgmCache.put(player.soundUrl, player);
+                }
+            }
             nextBgm = player;
-            nextBgm.setLoop(loop);
             bgmPlaying = true;
             lastBgm = nextBgm;
         }

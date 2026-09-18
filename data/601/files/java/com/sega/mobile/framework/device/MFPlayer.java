@@ -168,49 +168,56 @@ public final class MFPlayer implements MediaPlayer.OnCompletionListener {
     }
 
     public void start() {
-        switch (soundState) {
-            case 0:
-            case 1:
-            case 3:
-            case 4:
-                mediaError(soundUrl, "start", STATE_NAME[soundState]);
+        try {
+            if (this.mPlayer == null || this.soundState == 0 || this.soundState == 4) {
+                realize();
+                prefetch();
+            } else if (this.soundState == 1) {
+                prefetch();
+            }
+            if (this.mPlayer == null) {
                 return;
-            case 2:
-                try {
-                    mPlayer.seekTo(mediaTimeForSet);
-                    mediaTimeForSet = 0;
-                    MediaPlayer mediaPlayer = mPlayer;
-                    mediaPlayer.setLooping(soundLoop);
-                    mPlayer.start();
-                    soundState = 3;
-                    return;
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    return;
+            }
+            if (this.soundState == 3) {
+                if (this.mediaTimeForSet > 0) {
+                    this.mPlayer.seekTo(this.mediaTimeForSet);
+                    this.mediaTimeForSet = 0;
                 }
-            default:
                 return;
+            }
+            this.mPlayer.setLooping(this.soundLoop);
+            if (this.mediaTimeForSet > 0) {
+                this.mPlayer.seekTo(this.mediaTimeForSet);
+                this.mediaTimeForSet = 0;
+            }
+            this.mPlayer.start();
+            this.soundState = 3;
+        } catch (Exception e) {
+            try {
+                this.soundState = 0;
+                realize();
+                prefetch();
+                if (this.mPlayer != null) {
+                    this.mPlayer.setLooping(this.soundLoop);
+                    this.mPlayer.start();
+                    this.soundState = 3;
+                }
+            } catch (Exception e2) {
+            }
         }
     }
 
     public void stop() {
-        switch (this.soundState) {
-            case 0:
-            case 1:
-            case 4:
-                mediaError(this.soundUrl, "stop", STATE_NAME[this.soundState]);
-                return;
-            case 3:
-                try {
-                    this.mPlayer.stop();
-                    this.soundState = 2;
-                    return;
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    return;
-                }
-            default:
-                return;
+        try {
+            if (this.mPlayer != null && this.soundState == 3) {
+                this.mPlayer.pause();
+                this.mPlayer.seekTo(0);
+            }
+            if (this.soundState == 3) {
+                this.soundState = 2;
+            }
+        } catch (Exception e) {
+            this.soundState = 2;
         }
     }
     
