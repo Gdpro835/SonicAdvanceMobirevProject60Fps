@@ -14,9 +14,3 @@ On Android 6+ the game draws with `SurfaceHolder.lockHardwareCanvas()`:
 - Text still uses the `fontImage` overlay; that bitmap is erased every frame so loading tips do not stay after the tip window closes.
 
 Set `MFDevice.useGpu = false` to force the software path.
-
-## Audio
-
-Sound effects go through Android `SoundPool` (preloaded, no extra threads).
-BGM stays on a small `MediaPlayer` cache. Loop/sequence SEs share one stream so
-ziplines, 1-ups and score tally cannot spawn MediaPlayer storms.
